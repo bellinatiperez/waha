@@ -56,6 +56,7 @@ export enum WAHAEngine {
   WPP = 'WPP',
   NOWEB = 'NOWEB',
   GOWS = 'GOWS',
+  ZAPO = 'ZAPO',
 }
 
 export enum WAHAPresenceStatus {
