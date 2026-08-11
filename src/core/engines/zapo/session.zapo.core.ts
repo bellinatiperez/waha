@@ -31,6 +31,7 @@ import {
   ACK_UNKNOWN,
   WAHAEngine,
   WAHAEvents,
+  WAHAPresenceStatus,
   WAHASessionStatus,
   WAMessageAck,
 } from '@waha/structures/enums.dto';
@@ -65,6 +66,17 @@ import {
 
 import { ZapoStoreFactoryCore } from './ZapoStoreFactoryCore';
 import { ZapoConfig } from './types';
+
+// zapo only speaks composing/paused - "recording" is a composing chatstate
+// carrying the audio media hint, which is how WhatsApp Web signals it too.
+const ZAPO_CHATSTATE = {
+  [WAHAPresenceStatus.TYPING]: { state: 'composing' as const },
+  [WAHAPresenceStatus.RECORDING]: {
+    state: 'composing' as const,
+    media: 'audio' as const,
+  },
+  [WAHAPresenceStatus.PAUSED]: { state: 'paused' as const },
+};
 
 const ZAPO_GROUP_PARTICIPANT_TYPE: Record<string, GroupParticipantType> = {
   add: GroupParticipantType.JOIN,
@@ -908,6 +920,48 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       groupJid,
       this.toParticipantJids(request),
     );
+  }
+
+  /**
+   * Profile and presence
+   */
+  @Activity()
+  public async setProfileName(name: string): Promise<boolean> {
+    await this.client.profile.setPushName(name);
+    return true;
+  }
+
+  @Activity()
+  public async setProfileStatus(status: string): Promise<boolean> {
+    await this.client.profile.setStatus(status);
+    return true;
+  }
+
+  @Activity()
+  public async setPresence(
+    presence: WAHAPresenceStatus,
+    chatId?: string,
+  ): Promise<void> {
+    if (!chatId) {
+      const type =
+        presence === WAHAPresenceStatus.ONLINE ? 'available' : 'unavailable';
+      await this.client.presence.send(type);
+      return;
+    }
+    const chatstate = ZAPO_CHATSTATE[presence];
+    if (!chatstate) {
+      throw new UnprocessableEntityException(
+        `ZAPO engine doesn't support the '${presence}' presence for a chat`,
+      );
+    }
+    const jid = toJID(this.ensureSuffix(chatId));
+    await this.client.presence.sendChatstate(jid, chatstate);
+  }
+
+  @Activity()
+  public async subscribePresence(id: string): Promise<any> {
+    const jid = toJID(this.ensureSuffix(id));
+    await this.client.presence.subscribe(jid);
   }
 
   /**
