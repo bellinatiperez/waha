@@ -27,6 +27,8 @@ import {
   ParticipantsRequest,
 } from '@waha/structures/groups.dto';
 import { GroupParticipantType } from '@waha/structures/groups.events.dto';
+import { ContactQuery, ContactRequest } from '@waha/structures/contacts.dto';
+import { PaginationParams } from '@waha/structures/pagination.dto';
 import {
   ACK_UNKNOWN,
   WAHAEngine,
@@ -977,11 +979,94 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   }
 
   /**
+   * Chats
+   */
+  protected sessionStores() {
+    return this.store.session(this.name);
+  }
+
+  @Activity()
+  public async getChats(pagination: PaginationParams) {
+    const limit = pagination?.limit;
+    const threads = await this.sessionStores().threads.list(limit);
+    return threads.map((thread) => ({
+      id: toCusFormat(thread.jid),
+      name: thread.name ?? null,
+      conversationTimestamp: null,
+      unreadCount: thread.unreadCount ?? 0,
+      archived: thread.archived ?? false,
+      _data: thread,
+    }));
+  }
+
+  @Activity()
+  public async deleteChat(chatId) {
+    const jid = toJID(this.ensureSuffix(chatId));
+    await this.client.chat.deleteChat(jid);
+  }
+
+  @Activity()
+  public async archiveChat(chatId) {
+    const jid = toJID(this.ensureSuffix(chatId));
+    await this.client.chat.setChatArchive(jid, true);
+  }
+
+  @Activity()
+  public async unarchiveChat(chatId) {
+    const jid = toJID(this.ensureSuffix(chatId));
+    await this.client.chat.setChatArchive(jid, false);
+  }
+
+  /**
+   * Contacts
+   */
+  @Activity()
+  public async getContact(query: ContactQuery) {
+    const jid = toJID(this.ensureSuffix(query.contactId));
+    const contact = await this.sessionStores().contacts.getByJid(jid);
+    if (!contact) {
+      return null;
+    }
+    return {
+      id: toCusFormat(contact.jid),
+      number: contact['phoneNumber'] ?? null,
+      name: contact['name'] ?? null,
+      pushname: contact['pushName'] ?? null,
+      _data: contact,
+    };
+  }
+
+  @Activity()
+  public async getContactAbout(
+    query: ContactQuery,
+  ): Promise<{
+    about: string;
+  }> {
+    const jid = toJID(this.ensureSuffix(query.contactId));
+    const status = await this.client.profile.getStatus(jid);
+    return { about: status?.status ?? null };
+  }
+
+  @Activity()
+  public async blockContact(request: ContactRequest) {
+    const jid = toJID(this.ensureSuffix(request.contactId));
+    await this.client.privacy.blockUser(jid);
+  }
+
+  @Activity()
+  public async unblockContact(request: ContactRequest) {
+    const jid = toJID(this.ensureSuffix(request.contactId));
+    await this.client.privacy.unblockUser(jid);
+  }
+
+  /**
    * Not implemented yet.
    *
    * forwardMessage and readChatMessages need the message archive wired up
-   * (zapo keeps it in the 'messages' store domain), and zapo exposes no
-   * usync contact lookup, which is what checkNumberStatus needs.
+   * (zapo keeps it in the 'messages' store domain); getContacts has no
+   * backing API at all - zapo's contact store offers lookup by jid or phone
+   * number but no listing, and there is no usync contact query either, which
+   * is also what checkNumberStatus would need.
    */
   checkNumberStatus(request: CheckNumberStatusQuery) {
     throw new NotImplementedByEngineError();
