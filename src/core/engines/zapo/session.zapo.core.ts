@@ -3,6 +3,7 @@ import { Activity } from '@waha/core/abc/activity';
 import { WhatsappSession } from '@waha/core/abc/session.abc';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
 import { QR } from '@waha/core/QR';
+import { parseMessageIdSerialized } from '@waha/core/utils/ids';
 import { toCusFormat, toJID } from '@waha/core/utils/jids';
 import {
   CheckNumberStatusQuery,
@@ -29,6 +30,8 @@ import {
   WAMessageAck,
 } from '@waha/structures/enums.dto';
 import { WAMessage } from '@waha/structures/responses.dto';
+import { BinaryFile, RemoteFile } from '@waha/structures/files.dto';
+import { WAMimeType } from '@waha/core/media/WAMimeType';
 import { PairingCodeResponse } from '@waha/structures/auth.dto';
 import { MeInfo } from '@waha/structures/sessions.dto';
 import { SECOND } from '@waha/structures/enums.dto';
@@ -447,14 +450,174 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   }
 
   /**
-   * Not implemented yet - the engine is being built incrementally and these
-   * land with media, groups and chats support.
+   * Turns the WAHA file payload (remote url or inline base64) into the bytes
+   * zapo's media builder expects.
    */
-  checkNumberStatus(request: CheckNumberStatusQuery) {
-    throw new NotImplementedByEngineError();
+  protected async fileToMedia(file: BinaryFile | RemoteFile): Promise<Buffer> {
+    if ('url' in file && file.url) {
+      return this.fetchFile(file.url);
+    }
+    if ('data' in file && file.data) {
+      return Buffer.from(file.data, 'base64');
+    }
+    throw new UnprocessableEntityException(
+      'Either "file.url" or "file.data" must be specified.',
+    );
   }
 
-  sendLocation(request: MessageLocationRequest) {
+  protected async fetchFile(url: string): Promise<Buffer> {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new UnprocessableEntityException(
+        `Failed to download the file from '${url}': ${response.status}`,
+      );
+    }
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  /**
+   * Builds the send options, resolving 'reply_to' into the quote zapo fills
+   * the context info from.
+   */
+  protected buildSendOptions(request: {
+    chatId: string;
+    reply_to?: string;
+  }): WaSendMessageOptions {
+    if (!request.reply_to) {
+      return {};
+    }
+    const key = parseMessageIdSerialized(request.reply_to, true);
+    return {
+      quote: {
+        id: key.id,
+        remoteJid: toJID(this.ensureSuffix(request.chatId)),
+        participant: key.participant,
+      },
+    };
+  }
+
+  @Activity()
+  async sendImage(request: MessageImageRequest) {
+    const chatId = toJID(this.ensureSuffix(request.chatId));
+    const media = await this.fileToMedia(request.file);
+    return this.publish(
+      chatId,
+      {
+        type: 'image',
+        media: media,
+        mimetype: request.file.mimetype,
+        caption: request.caption,
+      },
+      this.buildSendOptions(request),
+    );
+  }
+
+  @Activity()
+  async sendFile(request: MessageFileRequest) {
+    const chatId = toJID(this.ensureSuffix(request.chatId));
+    const media = await this.fileToMedia(request.file);
+    return this.publish(
+      chatId,
+      {
+        type: 'document',
+        media: media,
+        mimetype: request.file.mimetype,
+        caption: request.caption,
+        fileName: request.file.filename,
+      },
+      this.buildSendOptions(request),
+    );
+  }
+
+  @Activity()
+  async sendVoice(request: MessageVoiceRequest) {
+    const chatId = toJID(this.ensureSuffix(request.chatId));
+    let media = await this.fileToMedia(request.file);
+    let mimetype = request.file.mimetype;
+    if (request.convert) {
+      media = await this.mediaConverter.voice(media);
+      mimetype = WAMimeType.VOICE;
+    }
+    return this.publish(
+      chatId,
+      {
+        type: 'audio',
+        media: media,
+        mimetype: mimetype || WAMimeType.VOICE,
+        ptt: true,
+      },
+      this.buildSendOptions(request),
+    );
+  }
+
+  @Activity()
+  async sendLocation(request: MessageLocationRequest) {
+    const chatId = toJID(this.ensureSuffix(request.chatId));
+    return this.publish(
+      chatId,
+      {
+        locationMessage: {
+          degreesLatitude: request.latitude,
+          degreesLongitude: request.longitude,
+          name: request.title || null,
+        },
+      },
+      this.buildSendOptions(request),
+    );
+  }
+
+  @Activity()
+  async reply(request: MessageReplyRequest) {
+    const chatId = toJID(this.ensureSuffix(request.chatId));
+    return this.publish(
+      chatId,
+      { type: 'text', text: request.text },
+      this.buildSendOptions(request),
+    );
+  }
+
+  @Activity()
+  async setReaction(request: MessageReactionRequest) {
+    const key = parseMessageIdSerialized(request.messageId);
+    const chatId = toJID(this.ensureSuffix(key.remoteJid));
+    // An empty emoji revokes the reaction, which is what WAHA sends too.
+    await this.client.message.send(chatId, {
+      type: 'reaction',
+      emoji: request.reaction,
+      target: {
+        id: key.id,
+        remoteJid: chatId,
+        fromMe: key.fromMe,
+        participant: key.participant,
+      },
+    });
+  }
+
+  @Activity()
+  async sendSeen(request: SendSeenRequest) {
+    const chatId = toJID(this.ensureSuffix(request.chatId));
+    const key = parseMessageIdSerialized(request.messageId, true);
+    await this.client.message.sendReceipt(chatId, key.id, {
+      type: 'read',
+      participant: request.participant,
+    });
+  }
+
+  @Activity()
+  async fetchContactProfilePicture(id: string): Promise<string | null> {
+    const jid = toJID(this.ensureSuffix(id));
+    const picture = await this.client.profile.getProfilePicture(jid);
+    return picture?.url ?? null;
+  }
+
+  /**
+   * Not implemented yet.
+   *
+   * forwardMessage and readChatMessages need the message archive wired up
+   * (zapo keeps it in the 'messages' store domain), and zapo exposes no
+   * usync contact lookup, which is what checkNumberStatus needs.
+   */
+  checkNumberStatus(request: CheckNumberStatusQuery) {
     throw new NotImplementedByEngineError();
   }
 
@@ -462,38 +625,10 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     throw new NotImplementedByEngineError();
   }
 
-  sendImage(request: MessageImageRequest) {
-    throw new NotImplementedByEngineError();
-  }
-
-  sendFile(request: MessageFileRequest) {
-    throw new NotImplementedByEngineError();
-  }
-
-  sendVoice(request: MessageVoiceRequest) {
-    throw new NotImplementedByEngineError();
-  }
-
-  reply(request: MessageReplyRequest) {
-    throw new NotImplementedByEngineError();
-  }
-
-  sendSeen(chat: SendSeenRequest) {
-    throw new NotImplementedByEngineError();
-  }
-
-  setReaction(request: MessageReactionRequest) {
-    throw new NotImplementedByEngineError();
-  }
-
   readChatMessages(
     chatId: string,
     request: ReadChatMessagesQuery,
   ): Promise<ReadChatMessagesResponse> {
-    throw new NotImplementedByEngineError();
-  }
-
-  fetchContactProfilePicture(id: string): Promise<string | null> {
     throw new NotImplementedByEngineError();
   }
 }
