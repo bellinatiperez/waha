@@ -45,7 +45,10 @@ import {
   WaClient,
   WaClientOptions,
   WaClientPluginDefinition,
+  WaIncomingAddonEvent,
   WaIncomingMessageEvent,
+  WaIncomingPresenceEvent,
+  WaIncomingProtocolMessageEvent,
   WaIncomingReceiptEvent,
   WaMessagePublishResult,
   WaSendMessageContent,
@@ -267,6 +270,107 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     this.events2
       .get(WAHAEvents.MESSAGE_ACK)
       .switch(merge(receiptAcks$, this.sentAcks$));
+
+    // Reactions and edits arrive as encrypted addons attached to a parent
+    // message, not as messages of their own.
+    const addons$ = this.fromClientEvent<WaIncomingAddonEvent>(
+      'message_addon',
+    ).pipe(filter((event) => this.jids.include(event.key?.remoteJid)));
+
+    this.events2.get(WAHAEvents.MESSAGE_REACTION).switch(
+      addons$.pipe(
+        filter((event) => event.kind === 'reaction'),
+        map((event) => this.toReaction(event)),
+      ),
+    );
+
+    this.events2.get(WAHAEvents.MESSAGE_EDITED).switch(
+      addons$.pipe(
+        filter((event) => event.kind === 'message_edit'),
+        map((event) => this.toEdited(event)),
+      ),
+    );
+
+    this.events2.get(WAHAEvents.MESSAGE_REVOKED).switch(
+      this.fromClientEvent<WaIncomingProtocolMessageEvent>(
+        'message_protocol',
+      ).pipe(
+        filter((event) => this.jids.include(event.key?.remoteJid)),
+        filter((event) => !!event.protocolMessage?.key),
+        map((event) => this.toRevoked(event)),
+      ),
+    );
+
+    this.events2
+      .get(WAHAEvents.PRESENCE_UPDATE)
+      .switch(
+        this.fromClientEvent<WaIncomingPresenceEvent>('presence').pipe(
+          map((event) => this.toPresence(event)),
+        ),
+      );
+  }
+
+  protected toReaction(event: WaIncomingAddonEvent): any {
+    const decrypted = event.decrypted as any;
+    return {
+      id: event.key?.id,
+      timestamp: event.key?.['timestampSeconds'],
+      from: toCusFormat(event.key?.remoteJid),
+      fromMe: event.key?.fromMe,
+      participant: toCusFormat(event.key?.participant),
+      reaction: {
+        text: decrypted?.text ?? decrypted?.emoji ?? '',
+        messageId: event.targetMessageId,
+      },
+      _data: event.decrypted,
+    };
+  }
+
+  protected toEdited(event: WaIncomingAddonEvent): any {
+    const decrypted = event.decrypted as any;
+    const message = decrypted?.editedMessage ?? decrypted?.message;
+    return {
+      id: event.key?.id,
+      timestamp: event.key?.['timestampSeconds'],
+      from: toCusFormat(event.key?.remoteJid),
+      fromMe: event.key?.fromMe,
+      participant: toCusFormat(event.key?.participant),
+      body: this.extractText(message),
+      editedMessageId: event.targetMessageId,
+      _data: event.decrypted,
+    };
+  }
+
+  protected toRevoked(event: WaIncomingProtocolMessageEvent): any {
+    const target = event.protocolMessage?.key;
+    return {
+      revokedMessageId: target?.id,
+      after: null,
+      before: null,
+      _data: {
+        from: toCusFormat(event.key?.remoteJid),
+        participant: toCusFormat(event.key?.participant),
+        key: target,
+      },
+    };
+  }
+
+  protected toPresence(event: WaIncomingPresenceEvent): any {
+    const chatId = toCusFormat(event.chatJid);
+    return {
+      id: chatId,
+      presences: [
+        {
+          participant: chatId,
+          lastSeen: event.lastSeen ?? null,
+          lastKnownPresence: event.type,
+        },
+      ],
+    };
+  }
+
+  protected extractText(message: any): string | null {
+    return message?.conversation ?? message?.extendedTextMessage?.text ?? null;
   }
 
   /**
@@ -337,10 +441,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   }
 
   protected toWAMessage(event: WaIncomingMessageEvent): any {
-    const text =
-      event.message?.conversation ??
-      event.message?.extendedTextMessage?.text ??
-      null;
+    const text = this.extractText(event.message);
     return {
       id: event.key?.id,
       timestamp: event.timestampSeconds,
