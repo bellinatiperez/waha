@@ -21,8 +21,8 @@ This guide summarizes how to explore, modify, and validate the WhatsApp HTTP API
 - **Framework**: NestJS v11 with dependency injection and modular controllers in
   `src/api`
 - **Engines**: WhatsApp engines are abstracted (`WEBJS`, `GOWS`, `NOWEB`,
-  `WPP`). Core uses `SessionManagerCore`; Plus swaps to `SessionManagerPlus`
-  with extra storage backends (Mongo/Postgres/SQLite)
+  `WPP`, `ZAPO`). Core uses `SessionManagerCore`; Plus swaps to
+  `SessionManagerPlus` with extra storage backends (Mongo/Postgres/SQLite)
 - **ESM Bridge**: ESM-only dependencies (Baileys) load through
   `src/vendor/esm.ts`
 - **Utilities**: RxJS streams drive webhook event fan-out. Prefer existing
@@ -74,7 +74,7 @@ export WAHA_DASHBOARD_PASSWORD=666
 export WAHA_DASHBOARD_USERNAME=admin
 export WWHATSAPP_SWAGGER_USERNAME=admin
 export WHATSAPP_SWAGGER_PASSWORD=666
-export WHATSAPP_DEFAULT_ENGINE={WEBJS|WPP|NOWEB|GOWS}
+export WHATSAPP_DEFAULT_ENGINE={WEBJS|WPP|NOWEB|GOWS|ZAPO}
 export WAHA_DEBUG_MODE=True
 export WAHA_HTTP_STRICT_MODE=1
 export WAHA_MEDIA_STORAGE=LOCAL
@@ -121,6 +121,34 @@ Each tool file mirrors an API domain (e.g. `chats.tools.ts` → chats endpoints)
 - Input schemas live in the matching `*.zod.ts` file.
 - Tools call the API via `this.textRequest({ method, url, ... })` inherited from
   `McpController`.
+
+## ZAPO Engine
+
+Fork-only engine built on [`zapo-js`](https://github.com/vinikjkkj/zapo), an
+independent TypeScript implementation of the WhatsApp Web protocol. Lives in
+`src/core/engines/zapo/` and needs no browser, like NOWEB and GOWS.
+
+- `ZapoStoreFactoryCore` maps the WAHA `DataStore` onto a zapo store, so the
+  operator keeps a single storage configuration: `LocalStore` writes
+  `zapo.sqlite` inside the session folder, `PsqlStore` reuses the per-session
+  database, `MongoStore` the per-session db
+- zapo never reconnects on its own, so the engine schedules a restart when the
+  connection closes (skipped on logout or an intentional stop)
+- Acks: `delivered`/`read`/`played` come from the receipt stanza, while `sent`
+  and `failed` come from the publish result - every send goes through
+  `publish()` so the ack stream stays complete
+- Reactions and edits arrive as encrypted addons on `message_addon`, not as
+  messages
+
+Per-session `config.engine` options (see `types.ts`): `media` and `wam` default
+to on, `voip` defaults to off and additionally needs `@roamhq/wrtc` and
+`libmlow-wasm` installed. `@zapo-js/native` needs no wiring - zapo picks the
+fastest crypto backend at load time.
+
+Not implemented: `checkNumberStatus` and `getContacts` (zapo exposes no usync
+contact query and its contact store cannot list), `forwardMessage` and
+`readChatMessages` (need the message archive wired up), plus status,
+newsletters, labels, polls and buttons.
 
 ## Related Sources
 
