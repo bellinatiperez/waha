@@ -3,7 +3,7 @@ import { Activity } from '@waha/core/abc/activity';
 import { WhatsappSession } from '@waha/core/abc/session.abc';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
 import { QR } from '@waha/core/QR';
-import { toJID } from '@waha/core/utils/jids';
+import { toCusFormat, toJID } from '@waha/core/utils/jids';
 import {
   CheckNumberStatusQuery,
   ChatRequest,
@@ -22,15 +22,20 @@ import {
   ReadChatMessagesResponse,
 } from '@waha/structures/chats.dto';
 import {
+  ACK_UNKNOWN,
   WAHAEngine,
   WAHAEvents,
   WAHASessionStatus,
+  WAMessageAck,
 } from '@waha/structures/enums.dto';
 import { WAMessage } from '@waha/structures/responses.dto';
 import { PairingCodeResponse } from '@waha/structures/auth.dto';
 import { MeInfo } from '@waha/structures/sessions.dto';
-import { Observable } from 'rxjs';
-import { filter, map } from 'rxjs/operators';
+import { SECOND } from '@waha/structures/enums.dto';
+import { WAMessageAckBody } from '@waha/structures/webhooks.dto';
+import { SingleDelayedJobRunner } from '@waha/utils/SingleDelayedJobRunner';
+import { merge, Observable, Subject } from 'rxjs';
+import { filter, map, mergeMap } from 'rxjs/operators';
 import { createMediaProcessor } from '@zapo-js/media-utils';
 import { wamPlugin } from '@zapo-js/wam';
 import {
@@ -38,16 +43,28 @@ import {
   WaClientOptions,
   WaClientPluginDefinition,
   WaIncomingMessageEvent,
+  WaIncomingReceiptEvent,
+  WaMessagePublishResult,
+  WaSendMessageContent,
+  WaSendMessageOptions,
   WaStore,
 } from 'zapo-js';
 
 import { ZapoStoreFactoryCore } from './ZapoStoreFactoryCore';
 import { ZapoConfig } from './types';
 
+const ZAPO_RECEIPT_ACK: Record<string, WAMessageAck> = {
+  delivered: WAMessageAck.DEVICE,
+  read: WAMessageAck.READ,
+  played: WAMessageAck.PLAYED,
+};
+
 export class WhatsappSessionZapoCore extends WhatsappSession {
   engine = WAHAEngine.ZAPO;
 
   protected engineConfig?: ZapoConfig;
+
+  private RESTART_DELAY_SECONDS = 2;
 
   protected storeFactory = new ZapoStoreFactoryCore();
   protected store: WaStore;
@@ -56,13 +73,65 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   private qr: QR = new QR();
   private me: MeInfo | null = null;
 
+  // Acks the engine issues itself (the server ack of an outgoing message),
+  // merged with the ones derived from inbound receipts.
+  private sentAcks$ = new Subject<WAMessageAckBody>();
+
+  private restartJob: SingleDelayedJobRunner;
+  private shouldRestart: boolean;
+
   async start() {
     this.status = WAHASessionStatus.STARTING;
+    this.shouldRestart = true;
+    if (!this.restartJob) {
+      this.restartJob = new SingleDelayedJobRunner(
+        'restart-engine',
+        this.RESTART_DELAY_SECONDS * SECOND,
+        this.logger,
+      );
+    }
     this.buildClient().catch((err) => {
       this.logger.error('Failed to start the client');
       this.logger.error(err, err.stack);
       this.status = WAHASessionStatus.FAILED;
+      this.restartClient();
     });
+  }
+
+  /**
+   * zapo never reconnects on its own - the docs are explicit that connect()
+   * has to be called again. Without this the session dies on the first
+   * network blip and only comes back with a manual restart.
+   */
+  private restartClient() {
+    if (!this.shouldRestart) {
+      this.logger.debug('Should not restart the client, ignoring the request');
+      return;
+    }
+    this.restartJob.schedule(async () => {
+      if (!this.shouldRestart) {
+        this.logger.warn('Should not restart the client, ignoring the request');
+        return;
+      }
+      this.logger.info('Restarting the client connection...');
+      await this.endClient();
+      await this.start();
+    });
+  }
+
+  private async endClient() {
+    try {
+      await this.client?.disconnect();
+    } catch (err) {
+      this.logger.warn(`Error while disconnecting the client: ${err}`);
+    }
+    try {
+      await this.store?.destroy();
+    } catch (err) {
+      this.logger.warn(`Error while destroying the store: ${err}`);
+    }
+    this.client = undefined;
+    this.store = undefined;
   }
 
   protected async buildClient() {
@@ -147,25 +216,34 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
         return;
       }
       if (event.isLogout) {
+        // Re-pairing is required, restarting would only spin on a dead device.
         this.logger.warn('The device has been unlinked, re-pairing required');
+        this.shouldRestart = false;
         this.status = WAHASessionStatus.FAILED;
         return;
       }
-      // zapo does not auto-reconnect - connect() has to be called again.
       this.logger.warn({ reason: event.reason }, 'Connection closed');
       this.status = WAHASessionStatus.FAILED;
+      this.restartClient();
+    });
+  }
+
+  /**
+   * Bridges a zapo client event into an observable, unsubscribing the
+   * listener when the stream is torn down.
+   */
+  protected fromClientEvent<T>(event: string): Observable<T> {
+    return new Observable<T>((subscriber) => {
+      const listener = (payload: T) => subscriber.next(payload);
+      this.client.on(event as any, listener);
+      return () => this.client?.off(event as any, listener);
     });
   }
 
   protected subscribeEngineEvents() {
-    const messages$ = new Observable<WaIncomingMessageEvent>((subscriber) => {
-      const listener = (event: WaIncomingMessageEvent) =>
-        subscriber.next(event);
-      this.client.on('message', listener);
-      return () => this.client.off('message', listener);
-    });
-
-    const payloads$ = messages$.pipe(
+    const payloads$ = this.fromClientEvent<WaIncomingMessageEvent>(
+      'message',
+    ).pipe(
       filter((event) => this.jids.include(event.key?.remoteJid)),
       map((event) => this.toWAMessage(event)),
     );
@@ -174,6 +252,85 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       .get(WAHAEvents.MESSAGE)
       .switch(payloads$.pipe(filter((message) => !message.fromMe)));
     this.events2.get(WAHAEvents.MESSAGE_ANY).switch(payloads$);
+
+    // delivered / read / played come from inbound receipts, while the server
+    // ack (sent) and the failures come from the send call itself.
+    const receiptAcks$ = this.fromClientEvent<WaIncomingReceiptEvent>(
+      'receipt',
+    ).pipe(
+      filter((event) => this.jids.include(event.chatJid)),
+      mergeMap((event) => this.toMessageAcks(event)),
+    );
+    this.events2
+      .get(WAHAEvents.MESSAGE_ACK)
+      .switch(merge(receiptAcks$, this.sentAcks$));
+  }
+
+  /**
+   * A single receipt stanza can acknowledge a batch of message ids, so it
+   * fans out into one ack payload per id.
+   */
+  protected toMessageAcks(event: WaIncomingReceiptEvent): WAMessageAckBody[] {
+    const ack = ZAPO_RECEIPT_ACK[event.status];
+    if (!ack) {
+      // 'inactive' is a presence hint, not an acknowledgement.
+      return [];
+    }
+    // A receipt from our own other device acknowledges someone else's
+    // message; anything else acknowledges a message we sent.
+    const fromMe = !event.fromSelfDevice;
+    const ids = event.messageIds?.length
+      ? event.messageIds
+      : [event.stanzaId].filter(Boolean);
+    return ids.map((id) => this.buildAckBody(id, event.chatJid, ack, fromMe));
+  }
+
+  protected buildAckBody(
+    id: string,
+    chatJid: string,
+    ack: WAMessageAck,
+    fromMe: boolean,
+    error?: number,
+  ): WAMessageAckBody {
+    const chatId = toCusFormat(chatJid);
+    const meId = toCusFormat(this.getSessionMeInfo()?.id);
+    const body: WAMessageAckBody = {
+      id: id,
+      from: fromMe ? meId : chatId,
+      to: fromMe ? chatId : meId,
+      participant: null,
+      fromMe: fromMe,
+      ack: ack,
+      ackName: WAMessageAck[ack] || ACK_UNKNOWN,
+      _data: { chatJid: chatJid, error: error },
+    };
+    return body;
+  }
+
+  /**
+   * Publishes the SERVER ack (or ERROR when WhatsApp rejected the publish)
+   * for a message this session just sent.
+   */
+  protected emitSentAck(chatJid: string, result: WaMessagePublishResult) {
+    const error = result?.ack?.error;
+    const ack = error ? WAMessageAck.ERROR : WAMessageAck.SERVER;
+    this.sentAcks$.next(
+      this.buildAckBody(result?.id, chatJid, ack, true, error),
+    );
+  }
+
+  /**
+   * Every outgoing message goes through here so the ack stream stays
+   * complete no matter which send method was used.
+   */
+  protected async publish(
+    chatJid: string,
+    content: WaSendMessageContent,
+    options?: WaSendMessageOptions,
+  ): Promise<WaMessagePublishResult> {
+    const result = await this.client.message.send(chatJid, content, options);
+    this.emitSentAck(chatJid, result);
+    return result;
   }
 
   protected toWAMessage(event: WaIncomingMessageEvent): any {
@@ -201,16 +358,19 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   }
 
   async stop() {
-    await this.client?.disconnect();
-    await this.store?.destroy();
-    this.client = undefined;
-    this.store = undefined;
+    // Order matters: drop the restart intent before closing the socket, or
+    // the 'connection' close handler schedules a restart of a stopped session.
+    this.shouldRestart = false;
+    this.restartJob?.cancel();
+    await this.endClient();
     this.status = WAHASessionStatus.STOPPED;
     this.stopEvents();
   }
 
   async unpair() {
     this.unpairing = true;
+    this.shouldRestart = false;
+    this.restartJob?.cancel();
     await this.client?.logout();
   }
 
@@ -271,10 +431,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   @Activity()
   async sendText(request: MessageTextRequest) {
     const chatId = toJID(this.ensureSuffix(request.chatId));
-    return this.client.message.send(chatId, {
-      type: 'text',
-      text: request.text,
-    });
+    return this.publish(chatId, { type: 'text', text: request.text });
   }
 
   @Activity()
