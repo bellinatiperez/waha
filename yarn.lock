@@ -4434,6 +4434,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@vinikjkkj/wa-wam@npm:2.3000.1041713829-1ec0d3b":
+  version: 2.3000.1041713829-1ec0d3b
+  resolution: "@vinikjkkj/wa-wam@npm:2.3000.1041713829-1ec0d3b"
+  checksum: 10/47ed2a1a98cd4b7b3c98fc346d7b20a587fcc22cd65e3cbd772c0ab6348c3daddd787910aa7625913b0239d629ad86433266dce4280e936ed9e99d7614d55b8c
+  languageName: node
+  linkType: hard
+
 "@wasm-audio-decoders/common@npm:9.0.7":
   version: 9.0.7
   resolution: "@wasm-audio-decoders/common@npm:9.0.7"
@@ -4706,6 +4713,32 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@zapo-js/media-utils@npm:^1.0.0":
+  version: 1.0.0
+  resolution: "@zapo-js/media-utils@npm:1.0.0"
+  peerDependencies:
+    file-type: ">=19.0.0"
+    sharp: ">=0.33.0"
+    zapo-js: ^1.0.0
+  peerDependenciesMeta:
+    file-type:
+      optional: true
+  checksum: 10/c380c10a372ed81f0151a4dc8295b9d3d4731ee51b4207c70fa0c36c4efd6aa0194bceb59292e3188e90d6c4dee82556fa0df1ac8a99f75640bf49d89d349d95
+  languageName: node
+  linkType: hard
+
+"@zapo-js/native@npm:^0.1.0":
+  version: 0.1.0
+  resolution: "@zapo-js/native@npm:0.1.0"
+  peerDependencies:
+    zapo-js: ^1.7.0
+  peerDependenciesMeta:
+    zapo-js:
+      optional: true
+  checksum: 10/5d1a48b92ddce0c82d816bd160444682620f6626caa17ba022f2c2bd7b6af187f39033664e01e7c865823e163d18c8bf16b4f6e26b04b5216bfd30e259c491d4
+  languageName: node
+  linkType: hard
+
 "@zapo-js/store-mongo@npm:^1.1.0":
   version: 1.1.0
   resolution: "@zapo-js/store-mongo@npm:1.1.0"
@@ -4733,6 +4766,28 @@ __metadata:
     better-sqlite3: ">=11.0.0"
     zapo-js: ^1.7.0
   checksum: 10/f72a78317ba46a89257394e8eec3b2bdf193da2dccc6472ee1e3f4d769c8180cfbc639981fcd3777deb472c1c102c4e4f51ab569a455fc0a9b79792ed8f224f2
+  languageName: node
+  linkType: hard
+
+"@zapo-js/voip@npm:^1.0.0":
+  version: 1.0.0
+  resolution: "@zapo-js/voip@npm:1.0.0"
+  peerDependencies:
+    "@roamhq/wrtc": ">=0.10.0"
+    libmlow-wasm: ^0.1.1
+    zapo-js: ^1.0.0
+  checksum: 10/a7569ac6b04dfa763ed34317467546033645758f097ce4a15c3c9f00012552d667b0c04276c26bb8be9c7687b73ff40cfcc21ee862f0d54b60af7bb53d8358d4
+  languageName: node
+  linkType: hard
+
+"@zapo-js/wam@npm:^0.1.1":
+  version: 0.1.1
+  resolution: "@zapo-js/wam@npm:0.1.1"
+  dependencies:
+    "@vinikjkkj/wa-wam": "npm:2.3000.1041713829-1ec0d3b"
+  peerDependencies:
+    zapo-js: ^1.5.0
+  checksum: 10/06f504b1bbd540c460178b59a557a57c33128e953d2391df31221c5badfede61a7181e79081383c3fe411433ec96485ad580ea35a8b668460c7d6d64986d9ae8
   languageName: node
   linkType: hard
 
@@ -13997,9 +14052,13 @@ __metadata:
     "@types/ws": "npm:^8.5.4"
     "@wppconnect-team/wppconnect": "github:wppconnect-team/wppconnect#master"
     "@wppconnect/wa-js": "github:wppconnect-team/wa-js#main"
+    "@zapo-js/media-utils": "npm:^1.0.0"
+    "@zapo-js/native": "npm:^0.1.0"
     "@zapo-js/store-mongo": "npm:^1.1.0"
     "@zapo-js/store-postgres": "npm:^1.1.0"
     "@zapo-js/store-sqlite": "npm:^1.1.0"
+    "@zapo-js/voip": "npm:^1.0.0"
+    "@zapo-js/wam": "npm:^0.1.1"
     adm-zip: "npm:0.5.10"
     agentkeepalive: "npm:^4.5.0"
     async-lock: "npm:^1.4.1"

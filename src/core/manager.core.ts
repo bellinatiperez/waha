@@ -15,6 +15,7 @@ import { NowebEngineConfigService } from '@waha/core/config/NowebEngineConfigSer
 import { WPPEngineConfigService } from '@waha/core/config/WPPEngineConfigService';
 import { WebJSEngineConfigService } from '@waha/core/config/WebJSEngineConfigService';
 import { WhatsappSessionGoWSCore } from '@waha/core/engines/gows/session.gows.core';
+import { WhatsappSessionZapoCore } from '@waha/core/engines/zapo/session.zapo.core';
 import { WhatsappSessionNoWebCore } from '@waha/core/engines/noweb/session.noweb.core';
 import { WhatsappSessionWPPCore } from '@waha/core/engines/wpp/session.wpp.core';
 import { WhatsappSessionWebJSCore } from '@waha/core/engines/webjs/session.webjs.core';
@@ -269,6 +270,9 @@ export class SessionManagerCore
     } else if (engine === WAHAEngine.GOWS) {
       this.SESSION_STOP_TIMEOUT = 10;
       return WhatsappSessionGoWSCore;
+    } else if (engine === WAHAEngine.ZAPO) {
+      this.SESSION_STOP_TIMEOUT = 1_000;
+      return WhatsappSessionZapoCore;
     } else {
       throw new Error(`Unknown whatsapp engine '${engine}'.`);
     }
