@@ -4706,6 +4706,36 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@zapo-js/store-mongo@npm:^1.1.0":
+  version: 1.1.0
+  resolution: "@zapo-js/store-mongo@npm:1.1.0"
+  peerDependencies:
+    mongodb: ">=6.0.0"
+    zapo-js: ^1.7.0
+  checksum: 10/8a4b7037476aa9b38e8c68899ad53e9b642a46707eaa2265e5e6d1cf435e192fe24ef8ff10d7cd3313deb5e44264b4ce317d97bcc5e9b4e0902242e806e3f92c
+  languageName: node
+  linkType: hard
+
+"@zapo-js/store-postgres@npm:^1.1.0":
+  version: 1.1.0
+  resolution: "@zapo-js/store-postgres@npm:1.1.0"
+  peerDependencies:
+    pg: ">=8.0.0"
+    zapo-js: ^1.7.0
+  checksum: 10/73ee5e2cf1f78dc478c08060d7b9d80385f2ef49da0399615855400c26019a570956f0f8a52a5bcb85911e40e6fe98b080d28913b68c12546e6b747b6c691464
+  languageName: node
+  linkType: hard
+
+"@zapo-js/store-sqlite@npm:^1.1.0":
+  version: 1.1.0
+  resolution: "@zapo-js/store-sqlite@npm:1.1.0"
+  peerDependencies:
+    better-sqlite3: ">=11.0.0"
+    zapo-js: ^1.7.0
+  checksum: 10/f72a78317ba46a89257394e8eec3b2bdf193da2dccc6472ee1e3f4d769c8180cfbc639981fcd3777deb472c1c102c4e4f51ab569a455fc0a9b79792ed8f224f2
+  languageName: node
+  linkType: hard
+
 "abbrev@npm:1":
   version: 1.1.1
   resolution: "abbrev@npm:1.1.1"
@@ -13967,6 +13997,9 @@ __metadata:
     "@types/ws": "npm:^8.5.4"
     "@wppconnect-team/wppconnect": "github:wppconnect-team/wppconnect#master"
     "@wppconnect/wa-js": "github:wppconnect-team/wa-js#main"
+    "@zapo-js/store-mongo": "npm:^1.1.0"
+    "@zapo-js/store-postgres": "npm:^1.1.0"
+    "@zapo-js/store-sqlite": "npm:^1.1.0"
     adm-zip: "npm:0.5.10"
     agentkeepalive: "npm:^4.5.0"
     async-lock: "npm:^1.4.1"
@@ -14040,6 +14073,7 @@ __metadata:
     whatsapp-web.js: "github:devlikeapro/whatsapp-web.js#fork-main-2026-06-26"
     write-file-atomic: "npm:^6.0.0"
     yaml: "npm:^2.7.1"
+    zapo-js: "npm:^1.7.1"
     zod: "npm:^4.3.6"
   dependenciesMeta:
     bufferutil:
@@ -14479,6 +14513,27 @@ __metadata:
   version: 2.1.2
   resolution: "yoctocolors-cjs@npm:2.1.2"
   checksum: 10/d731e3ba776a0ee19021d909787942933a6c2eafb2bbe85541f0c59aa5c7d475ce86fcb860d5803105e32244c3dd5ba875b87c4c6bf2d6f297da416aa54e556f
+  languageName: node
+  linkType: hard
+
+"zapo-js@npm:^1.7.1":
+  version: 1.7.1
+  resolution: "zapo-js@npm:1.7.1"
+  peerDependencies:
+    argo-codec: ^0.2.1
+    pino: ^9.0.0
+    pino-pretty: ^13.0.0
+    ws: ^8.20.1
+  peerDependenciesMeta:
+    argo-codec:
+      optional: true
+    pino:
+      optional: true
+    pino-pretty:
+      optional: true
+    ws:
+      optional: true
+  checksum: 10/43db923ad74a4d884b71932b5b03059a2c165f4c0aad00b041ab75f87e0030e6432285f7646590046b15dc7588862698bdf6d2b3c3d36583d83f3c0c0a577632
   languageName: node
   linkType: hard
 
