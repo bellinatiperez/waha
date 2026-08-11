@@ -1,4 +1,7 @@
-import { UnprocessableEntityException } from '@nestjs/common';
+import {
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { Activity } from '@waha/core/abc/activity';
 import { WhatsappSession } from '@waha/core/abc/session.abc';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
@@ -989,6 +992,9 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   public async getChats(pagination: PaginationParams) {
     const limit = pagination?.limit;
     const threads = await this.sessionStores().threads.list(limit);
+    // zapo's thread store carries no conversation timestamp and rarely fills
+    // in the name, so chats come back unordered and unnamed - unlike NOWEB,
+    // which keeps its own chat store. Wiring one up is a separate change.
     return threads.map((thread) => ({
       id: toCusFormat(thread.jid),
       name: thread.name ?? null,
@@ -1025,7 +1031,11 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     const jid = toJID(this.ensureSuffix(query.contactId));
     const contact = await this.sessionStores().contacts.getByJid(jid);
     if (!contact) {
-      return null;
+      // Returning null would answer 200 with an empty body - the contact
+      // store only knows the peers this session has actually seen.
+      throw new NotFoundException(
+        `Contact '${query.contactId}' is not known by this session`,
+      );
     }
     return {
       id: toCusFormat(contact.jid),
