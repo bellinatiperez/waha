@@ -32,7 +32,6 @@ import { MeInfo } from '@waha/structures/sessions.dto';
 import { Observable } from 'rxjs';
 import { filter, map } from 'rxjs/operators';
 import { createMediaProcessor } from '@zapo-js/media-utils';
-import { voipPlugin } from '@zapo-js/voip';
 import { wamPlugin } from '@zapo-js/wam';
 import {
   WaClient,
@@ -94,9 +93,20 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       plugins.push(wamPlugin());
     }
     if (this.engineConfig?.voip ?? false) {
-      plugins.push(voipPlugin());
+      plugins.push(this.buildVoipPlugin());
     }
     return plugins;
+  }
+
+  /**
+   * Loaded on demand: @zapo-js/voip requires @roamhq/wrtc and libmlow-wasm at
+   * module load, and neither is installed. Importing it at the top of the file
+   * takes the whole application down at boot, not just this engine.
+   */
+  protected buildVoipPlugin(): WaClientPluginDefinition {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { voipPlugin } = require('@zapo-js/voip');
+    return voipPlugin();
   }
 
   protected getMediaOptions(): WaClientOptions['media'] {

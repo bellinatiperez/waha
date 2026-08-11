@@ -21,6 +21,9 @@ export interface ZapoConfig {
    * Install the VoIP plugin (@zapo-js/voip), exposing client.voip.
    * Defaults to false: this engine does not map calls to the WAHA call
    * events yet, so the coordinator would have no consumer.
+   *
+   * Turning it on also requires installing its peer dependencies
+   * (@roamhq/wrtc and libmlow-wasm) - the plugin fails to load without them.
    */
   voip?: boolean;
 }
