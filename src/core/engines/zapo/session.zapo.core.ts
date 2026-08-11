@@ -23,6 +23,11 @@ import {
   ReadChatMessagesResponse,
 } from '@waha/structures/chats.dto';
 import {
+  CreateGroupRequest,
+  ParticipantsRequest,
+} from '@waha/structures/groups.dto';
+import { GroupParticipantType } from '@waha/structures/groups.events.dto';
+import {
   ACK_UNKNOWN,
   WAHAEngine,
   WAHAEvents,
@@ -44,6 +49,8 @@ import { wamPlugin } from '@zapo-js/wam';
 import {
   WaClient,
   WaClientOptions,
+  WaGroupEvent,
+  WaGroupMetadata,
   WaClientPluginDefinition,
   WaIncomingAddonEvent,
   WaIncomingMessageEvent,
@@ -58,6 +65,13 @@ import {
 
 import { ZapoStoreFactoryCore } from './ZapoStoreFactoryCore';
 import { ZapoConfig } from './types';
+
+const ZAPO_GROUP_PARTICIPANT_TYPE: Record<string, GroupParticipantType> = {
+  add: GroupParticipantType.JOIN,
+  remove: GroupParticipantType.LEAVE,
+  promote: GroupParticipantType.PROMOTE,
+  demote: GroupParticipantType.DEMOTE,
+};
 
 const ZAPO_RECEIPT_ACK: Record<string, WAMessageAck> = {
   delivered: WAMessageAck.DEVICE,
@@ -308,6 +322,71 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
           map((event) => this.toPresence(event)),
         ),
       );
+
+    this.subscribeGroupEvents();
+  }
+
+  /**
+   * zapo reports every group notification on one stream with 37 possible
+   * actions; WAHA splits them into join / leave / participants / update.
+   */
+  protected subscribeGroupEvents() {
+    const groups$ = this.fromClientEvent<WaGroupEvent>('group');
+
+    this.events2.get(WAHAEvents.GROUP_V2_JOIN).switch(
+      groups$.pipe(
+        filter((event) => event.action === 'create'),
+        map((event) => ({
+          timestamp: event.timestampSeconds,
+          group: { id: event.groupJid },
+          _data: event,
+        })),
+      ),
+    );
+
+    this.events2.get(WAHAEvents.GROUP_V2_LEAVE).switch(
+      groups$.pipe(
+        filter((event) => event.action === 'delete'),
+        map((event) => ({
+          timestamp: event.timestampSeconds,
+          group: { id: event.groupJid },
+          _data: event,
+        })),
+      ),
+    );
+
+    this.events2.get(WAHAEvents.GROUP_V2_PARTICIPANTS).switch(
+      groups$.pipe(
+        filter((event) => !!ZAPO_GROUP_PARTICIPANT_TYPE[event.action]),
+        map((event) => ({
+          group: { id: event.groupJid },
+          type: ZAPO_GROUP_PARTICIPANT_TYPE[event.action],
+          timestamp: event.timestampSeconds,
+          participants: (event.participants ?? []).map((participant) => ({
+            id: toCusFormat(participant.jid),
+          })),
+          _data: event,
+        })),
+      ),
+    );
+
+    // Everything else is a change to the group itself (subject, description,
+    // announce, restrict, ephemeral, member-add-mode, ...).
+    this.events2.get(WAHAEvents.GROUP_V2_UPDATE).switch(
+      groups$.pipe(
+        filter(
+          (event) =>
+            !ZAPO_GROUP_PARTICIPANT_TYPE[event.action] &&
+            event.action !== 'create' &&
+            event.action !== 'delete',
+        ),
+        map((event) => ({
+          timestamp: event.timestampSeconds,
+          group: { id: event.groupJid, subject: event.subject },
+          _data: event,
+        })),
+      ),
+    );
   }
 
   protected toReaction(event: WaIncomingAddonEvent): any {
@@ -709,6 +788,126 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     const jid = toJID(this.ensureSuffix(id));
     const picture = await this.client.profile.getProfilePicture(jid);
     return picture?.url ?? null;
+  }
+
+  /**
+   * Groups
+   */
+  protected toGroupInfo(metadata: WaGroupMetadata): any {
+    return {
+      id: metadata.jid,
+      subject: metadata.subject,
+      description: metadata.desc ?? null,
+      owner: metadata.owner ?? null,
+      creation: metadata.creation ?? null,
+      size: metadata.size ?? null,
+      restrict: metadata.restrict,
+      announce: metadata.announce,
+      _data: metadata,
+    };
+  }
+
+  protected toParticipantJids(request: ParticipantsRequest): string[] {
+    return request.participants.map((participant) =>
+      toJID(this.ensureSuffix(participant.id)),
+    );
+  }
+
+  @Activity()
+  public async createGroup(request: CreateGroupRequest) {
+    const participants = this.toParticipantJids(request as any);
+    const metadata = await this.client.group.createGroup(
+      request.name,
+      participants,
+    );
+    return this.toGroupInfo(metadata);
+  }
+
+  @Activity()
+  public async getGroup(id) {
+    const groupJid = toJID(this.ensureSuffix(id));
+    const metadata = await this.client.group.queryGroupMetadata(groupJid);
+    return this.toGroupInfo(metadata);
+  }
+
+  @Activity()
+  public async leaveGroup(id) {
+    const groupJid = toJID(this.ensureSuffix(id));
+    await this.client.group.leaveGroup([groupJid]);
+  }
+
+  @Activity()
+  public async setSubject(id, subject) {
+    const groupJid = toJID(this.ensureSuffix(id));
+    await this.client.group.setSubject(groupJid, subject);
+  }
+
+  @Activity()
+  public async setDescription(id, description) {
+    const groupJid = toJID(this.ensureSuffix(id));
+    await this.client.group.setDescription(groupJid, description);
+  }
+
+  @Activity()
+  public async setMemberAddMode(id, value) {
+    const groupJid = toJID(this.ensureSuffix(id));
+    await this.client.group.setMemberAddMode(groupJid, value);
+  }
+
+  @Activity()
+  public async getInviteCode(id): Promise<string> {
+    const groupJid = toJID(this.ensureSuffix(id));
+    return this.client.group.queryInviteCode(groupJid);
+  }
+
+  @Activity()
+  public async revokeInviteCode(id): Promise<string> {
+    const groupJid = toJID(this.ensureSuffix(id));
+    const result = await this.client.group.revokeInvite(groupJid);
+    return result?.code;
+  }
+
+  @Activity()
+  public async getParticipants(id) {
+    const groupJid = toJID(this.ensureSuffix(id));
+    const metadata = await this.client.group.queryGroupMetadata(groupJid);
+    return metadata.participants;
+  }
+
+  @Activity()
+  public async addParticipants(id, request: ParticipantsRequest) {
+    const groupJid = toJID(this.ensureSuffix(id));
+    return this.client.group.addParticipants(
+      groupJid,
+      this.toParticipantJids(request),
+    );
+  }
+
+  @Activity()
+  public async removeParticipants(id, request: ParticipantsRequest) {
+    const groupJid = toJID(this.ensureSuffix(id));
+    return this.client.group.removeParticipants(
+      groupJid,
+      this.toParticipantJids(request),
+    );
+  }
+
+  @Activity()
+  public async promoteParticipantsToAdmin(id, request: ParticipantsRequest) {
+    const groupJid = toJID(this.ensureSuffix(id));
+    return this.client.group.promoteParticipants(
+      groupJid,
+      this.toParticipantJids(request),
+    );
+  }
+
+  @Activity()
+  public async demoteParticipantsToUser(id, request: ParticipantsRequest) {
+    const groupJid = toJID(this.ensureSuffix(id));
+    return this.client.group.demoteParticipants(
+      groupJid,
+      this.toParticipantJids(request),
+    );
   }
 
   /**
