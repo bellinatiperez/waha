@@ -43,6 +43,7 @@ import { MeInfo } from '@waha/structures/sessions.dto';
 import { SECOND } from '@waha/structures/enums.dto';
 import { WAMessageAckBody } from '@waha/structures/webhooks.dto';
 import { SingleDelayedJobRunner } from '@waha/utils/SingleDelayedJobRunner';
+import * as NodeCache from 'node-cache';
 import { merge, Observable, Subject } from 'rxjs';
 import { filter, map, mergeMap } from 'rxjs/operators';
 import { createMediaProcessor } from '@zapo-js/media-utils';
@@ -111,6 +112,11 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
 
   private restartJob: SingleDelayedJobRunner;
   private shouldRestart: boolean;
+
+  // Chat a message was published to, keyed by message id. Receipts come back
+  // addressed by LID, so without this the delivered/read acks would report a
+  // different "to" than the sent ack for the very same message.
+  private sentChats = new NodeCache({ stdTTL: 60 * 60, useClones: false });
 
   async start() {
     this.status = WAHASessionStatus.STARTING;
@@ -490,7 +496,10 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     fromMe: boolean,
     error?: number,
   ): WAMessageAckBody {
-    const chatId = toCusFormat(chatJid);
+    // Prefer the chat the message was published to - the receipt's own jid may
+    // be the LID form, which would not match the sent ack nor the API caller.
+    const known = this.sentChats?.get<string>(id);
+    const chatId = known ?? toCusFormat(chatJid);
     const meId = toCusFormat(this.getSessionMeInfo()?.id);
     const body: WAMessageAckBody = {
       id: id,
@@ -527,6 +536,9 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     options?: WaSendMessageOptions,
   ): Promise<WaMessagePublishResult> {
     const result = await this.client.message.send(chatJid, content, options);
+    if (result?.id) {
+      this.sentChats.set(result.id, toCusFormat(chatJid));
+    }
     this.emitSentAck(chatJid, result);
     return result;
   }

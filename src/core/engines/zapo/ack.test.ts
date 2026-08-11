@@ -103,3 +103,28 @@ describe('ZAPO acks', () => {
     expect(session.sent[0]._data.error).toBe(403);
   });
 });
+
+describe('ZAPO ack destination', () => {
+  it('reuses the published chat so later acks match the sent ack', () => {
+    const session = buildSession();
+    // The publish path recorded where the message actually went...
+    session.sentChats = { get: (id) => (id === 'AAA' ? '5548999@c.us' : null) };
+
+    // ...while the receipt comes back addressed by LID.
+    const bodies = session.toMessageAcks(
+      receipt('delivered', { chatJid: '254777627828362@lid' }),
+    );
+
+    expect(bodies[0].to).toBe('5548999@c.us');
+  });
+
+  it('falls back to the receipt jid for messages it did not publish', () => {
+    const session = buildSession();
+    session.sentChats = { get: () => null };
+
+    const bodies = session.toMessageAcks(
+      receipt('read', { fromSelfDevice: true }),
+    );
+    expect(bodies[0].from).toBe('5548999@c.us');
+  });
+});
