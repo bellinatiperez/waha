@@ -7,7 +7,7 @@ import { WhatsappSession } from '@waha/core/abc/session.abc';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
 import { QR } from '@waha/core/QR';
 import { parseMessageIdSerialized } from '@waha/core/utils/ids';
-import { toCusFormat, toJID } from '@waha/core/utils/jids';
+import { normalizeJid, toCusFormat, toJID } from '@waha/core/utils/jids';
 import {
   CheckNumberStatusQuery,
   ChatRequest,
@@ -247,8 +247,8 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       this.setStatus(WAHASessionStatus.PASSKEY_REQUIRED, null);
     });
 
-    this.client.on('auth_paired', ({ credentials }) => {
-      this.me = this.buildMeInfo(credentials?.meJid);
+    this.client.on('auth_paired', () => {
+      this.me = this.buildMeInfo();
       this.logger.info('Paired with WhatsApp');
     });
   }
@@ -256,7 +256,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   protected listenConnectionEvents() {
     this.client.on('connection', (event) => {
       if (event.status === 'open') {
-        this.me = this.buildMeInfo(this.client.getCredentials()?.meJid);
+        this.me = this.buildMeInfo();
         this.status = WAHASessionStatus.WORKING;
         return;
       }
@@ -564,11 +564,24 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     };
   }
 
-  protected buildMeInfo(meJid?: string | null): MeInfo | null {
+  /**
+   * zapo hands over the device-qualified jid (554891600684:80@s.whatsapp.net).
+   * WAHA keeps that under "jid" and expects "id" to be the plain chat id, the
+   * same value every other engine reports - otherwise consumers comparing
+   * me.id against a chat id would never match.
+   */
+  protected buildMeInfo(): MeInfo | null {
+    const credentials = this.client?.getCredentials();
+    const meJid = credentials?.meJid;
     if (!meJid) {
       return null;
     }
-    return { id: meJid, pushName: null };
+    return {
+      id: toCusFormat(normalizeJid(meJid)),
+      jid: meJid,
+      lid: credentials.meLid ? normalizeJid(credentials.meLid) : undefined,
+      pushName: credentials.meDisplayName ?? credentials.pushName ?? null,
+    };
   }
 
   async stop() {
