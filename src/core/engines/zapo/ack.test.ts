@@ -11,6 +11,9 @@ class SessionUnderTest {
   buildAckBody = WhatsappSessionZapoCore.prototype['buildAckBody'];
   emitSentAck = WhatsappSessionZapoCore.prototype['emitSentAck'];
 
+  // No timelock in these tests, so the restriction block never applies.
+  buildRestrictionError = () => null;
+
   sent = [];
   sentAcks$ = { next: (body) => this.sent.push(body) };
 

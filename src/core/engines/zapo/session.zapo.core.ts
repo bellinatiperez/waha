@@ -45,9 +45,16 @@ import { WANumberExistResult } from '@waha/structures/chatting.dto';
 import { BinaryFile, RemoteFile } from '@waha/structures/files.dto';
 import { WAMimeType } from '@waha/core/media/WAMimeType';
 import { PairingCodeResponse } from '@waha/structures/auth.dto';
-import { MeInfo } from '@waha/structures/sessions.dto';
+import {
+  MeInfo,
+  ReachoutTimelockEnforcementType,
+  SessionRestriction,
+} from '@waha/structures/sessions.dto';
 import { SECOND } from '@waha/structures/enums.dto';
-import { WAMessageAckBody } from '@waha/structures/webhooks.dto';
+import {
+  WAMessageAckBody,
+  WAMessageAckError,
+} from '@waha/structures/webhooks.dto';
 import { SingleDelayedJobRunner } from '@waha/utils/SingleDelayedJobRunner';
 import * as NodeCache from 'node-cache';
 import { merge, Observable, Subject } from 'rxjs';
@@ -276,6 +283,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       if (event.status === 'open') {
         this.me = this.buildMeInfo();
         this.status = WAHASessionStatus.WORKING;
+        void this.refreshReachoutTimelock();
         return;
       }
       if (event.isLogout) {
@@ -546,9 +554,14 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   protected emitSentAck(chatJid: string, result: WaMessagePublishResult) {
     const error = result?.ack?.error;
     const ack = error ? WAMessageAck.ERROR : WAMessageAck.SERVER;
-    this.sentAcks$.next(
-      this.buildAckBody(result?.id, chatJid, ack, true, error),
-    );
+    const body = this.buildAckBody(result?.id, chatJid, ack, true, error);
+    if (ack === WAMessageAck.ERROR) {
+      const restriction = this.buildRestrictionError(error);
+      if (restriction) {
+        body.error = restriction;
+      }
+    }
+    this.sentAcks$.next(body);
   }
 
   /**
@@ -850,6 +863,66 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     const jid = toJID(this.ensureSuffix(id));
     const picture = await this.client.profile.getProfilePicture(jid);
     return picture?.url ?? null;
+  }
+
+  /**
+   * Account restriction ("reachout timelock")
+   */
+  protected async refreshReachoutTimelock(): Promise<void> {
+    try {
+      const timelock = await this.client.message.getReachoutTimelock();
+      this.reachoutTimelock.update({
+        enforcementType: (timelock?.enforcementType ??
+          ReachoutTimelockEnforcementType.DEFAULT) as ReachoutTimelockEnforcementType,
+        isActive: timelock?.isActive === true,
+        timeEnforcementEnds: timelock?.enforcementEndsAt ?? null,
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to fetch the reachout timelock: ${err}`);
+    }
+  }
+
+  public getRestriction(): SessionRestriction | null {
+    const timelock = this.reachoutTimelock.value;
+    if (!timelock?.isActive) {
+      return null;
+    }
+    return {
+      active: true,
+      until: this.timelockEndsAtIso(timelock),
+      enforcementType: timelock.enforcementType,
+    };
+  }
+
+  protected timelockEndsAtIso(timelock): string | null {
+    if (!timelock?.timeEnforcementEnds) {
+      return null;
+    }
+    const endsAt = new Date(timelock.timeEnforcementEnds * 1000);
+    return isNaN(endsAt.getTime()) ? null : endsAt.toISOString();
+  }
+
+  /**
+   * Attaches the account-restriction reason to an ERROR ack while the session
+   * carries an active timelock - the same shape NOWEB/GOWS/WEBJS report, so
+   * consumers detect the restriction identically across engines.
+   *
+   * zapo surfaces the raw publish error code, so a 463 is confirmation on its
+   * own. Without one, this falls back to the conservative correlation the
+   * other engines use: this ack failed while the account is restricted.
+   */
+  protected buildRestrictionError(error?: number): WAMessageAckError | null {
+    const timelock = this.reachoutTimelock.value;
+    if (timelock?.isActive !== true && error !== 463) {
+      return null;
+    }
+    return {
+      code: '463',
+      blocked: true,
+      reason: 'account_restricted',
+      until: this.timelockEndsAtIso(timelock),
+      enforcementType: timelock?.enforcementType,
+    };
   }
 
   /**
