@@ -144,6 +144,7 @@ import {
   PollVote as WAHAPollVote,
   PollVotePayload,
   WAMessageAckBody,
+  WAMessageAckError,
   WAMessageEditedBody,
   WAMessageRevokedBody,
 } from '@waha/structures/webhooks.dto';
@@ -2148,6 +2149,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     const messagesAckDM$ = messageAckWEBJS$.pipe(
       map((event) => event.message),
       map<any, WAMessage>(this.toWAMessage.bind(this)),
+      map<WAMessage, WAMessage>(this.attachRestrictionError.bind(this)),
       filter((ack) => !isJidGroup(ack.to) && !isJidStatusBroadcast(ack.to)),
       filter((ack) => this.jids.include(ack.to)),
     );
@@ -2468,6 +2470,39 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
       replyTo: replyTo,
       _data: message.rawData,
     };
+  }
+
+  /**
+   * Anexa o motivo de restrição de conta num ack de ERROR quando a sessão
+   * tem uma reachoutTimelock ativa - mesmo padrão do GOWS/NOWEB, pro Hub
+   * detectar a restrição igual nos três engines. Deliberadamente conservador
+   * como a checagem do GOWS, porém mais impreciso: o whatsapp-web.js não
+   * expõe um código de erro por mensagem como o NOWEB/GOWS têm, então aqui só
+   * dá pra correlacionar "esse ack falhou" com "a conta está restrita agora"
+   * - não dá pra confirmar só com esse ack que a falha foi causada pela
+   * restrição (ex.: mensagem pra um contato bloqueado também viria como ERROR
+   * enquanto a conta está restrita).
+   */
+  private attachRestrictionError(ack: WAMessage): WAMessage {
+    if (ack.ack !== WAMessageAck.ERROR) {
+      return ack;
+    }
+    const timelock = this.reachoutTimelock.value;
+    if (timelock?.isActive !== true) {
+      return ack;
+    }
+    const error: WAMessageAckError = {
+      code: '463',
+      blocked: true,
+      reason: 'account_restricted',
+      until: timelock.timeEnforcementEnds
+        ? new Date(timelock.timeEnforcementEnds * 1000).toISOString()
+        : null,
+      enforcementType: timelock.enforcementType,
+    };
+    // @ts-ignore - `error` não é parte de WAMessage, mas esse objeto passa
+    // pelo pipeline de ack como um WAMessageAckBody, que tem esse campo.
+    return { ...ack, error };
   }
 
   protected extractReplyTo(message: Message): ReplyToMessage | null {
