@@ -1083,17 +1083,18 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   public async checkNumberStatus(
     request: CheckNumberStatusQuery,
   ): Promise<WANumberExistResult> {
-    const jid = toJID(this.ensureSuffix(request.phone));
+    const phone = request.phone.replace(/\D/g, '');
     const sid = `${Date.now()}.${Math.floor(Math.random() * 1e6)}-0`;
-    const node = buildContactUsyncIq(sid, [jid]);
+    const node = buildContactUsyncIq(sid, [phone]);
     const result = await this.client.lowlevel.query(node);
+    this.logger.debug({ result: result }, 'usync contact result');
     const [contact] = parseContactUsyncResult(result);
     if (!contact?.exists) {
       return { numberExists: false };
     }
     return {
       numberExists: true,
-      chatId: toCusFormat(contact.jid ?? jid),
+      chatId: toCusFormat(contact.jid ?? toJID(this.ensureSuffix(phone))),
     };
   }
 

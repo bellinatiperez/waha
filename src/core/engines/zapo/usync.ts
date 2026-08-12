@@ -21,10 +21,23 @@ interface Node {
   content?: any;
 }
 
-export function buildContactUsyncIq(sid: string, jids: string[]): Node {
-  const users = jids.map((jid) => ({
+/**
+ * The contact protocol identifies the peer by phone number carried as the
+ * text of a <contact> child, not by a jid attribute - the number is exactly
+ * what is not yet known to be a WhatsApp account. zapo's own user-node builder
+ * sets the jid attribute because its usync callers already hold one.
+ */
+export function buildContactUsyncIq(sid: string, phones: string[]): Node {
+  const users = phones.map((phone) => ({
     tag: WA_NODE_TAGS.USER,
-    attrs: { jid: jid },
+    attrs: {},
+    content: [
+      {
+        tag: WA_NODE_TAGS.CONTACT,
+        attrs: {},
+        content: `+${phone.replace(/\D/g, '')}`,
+      },
+    ],
   }));
   return {
     tag: WA_NODE_TAGS.IQ,
