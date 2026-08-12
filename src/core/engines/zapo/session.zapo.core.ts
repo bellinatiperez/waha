@@ -112,6 +112,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
 
   private qr: QR = new QR();
   private me: MeInfo | null = null;
+  private paired: boolean = false;
 
   // Acks the engine issues itself (the server ack of an outgoing message),
   // merged with the ones derived from inbound receipts.
@@ -182,6 +183,9 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   protected async buildClient() {
     this.store = this.storeFactory.buildStore(this.sessionStore, this.name);
     this.client = new WaClient(this.getClientOptions(), this.logger as any);
+    // A session restored from stored credentials is already paired, so a QR
+    // refresh must never drag it back to SCAN_QR_CODE.
+    this.paired = !!this.client.getCredentials()?.meJid;
     this.listenAuthEvents();
     this.listenConnectionEvents();
     this.subscribeEngineEvents();
@@ -234,6 +238,19 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     this.client.on('auth_qr', ({ qr }) => {
       this.qr.save(qr);
       this.printQR(this.qr);
+      if (this.status === WAHASessionStatus.SCAN_QR_CODE) {
+        // The QR rotates every few seconds; re-issuing the same status would
+        // send a session.status webhook on every rotation.
+        return;
+      }
+      if (this.paired) {
+        // zapo keeps rotating the QR while it reconnects after pairing. Going
+        // back to SCAN_QR_CODE here would report a connected session as still
+        // waiting to be scanned - and the base class delays WORKING through a
+        // switchMap, so the bounce also cancels the WORKING event outright.
+        this.logger.debug('Ignoring the QR refresh, the session is paired');
+        return;
+      }
       this.status = WAHASessionStatus.SCAN_QR_CODE;
     });
 
@@ -248,6 +265,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     });
 
     this.client.on('auth_paired', () => {
+      this.paired = true;
       this.me = this.buildMeInfo();
       this.logger.info('Paired with WhatsApp');
     });
