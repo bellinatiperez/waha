@@ -128,3 +128,31 @@ describe('ZAPO ack destination', () => {
     expect(bodies[0].from).toBe('5548999@c.us');
   });
 });
+
+describe('ZAPO me info', () => {
+  function sessionWithCredentials(credentials) {
+    const session: any = {
+      buildMeInfo: WhatsappSessionZapoCore.prototype['buildMeInfo'],
+      client: { getCredentials: () => credentials },
+    };
+    return session;
+  }
+
+  it('reports the plain chat id, keeping the device jid apart', () => {
+    const me = sessionWithCredentials({
+      meJid: '554891600684:80@s.whatsapp.net',
+      meLid: '13392429502664:80@lid',
+      meDisplayName: 'Cleber',
+    }).buildMeInfo();
+
+    // A consumer comparing me.id against a chat id has to find a match.
+    expect(me.id).toBe('554891600684@c.us');
+    expect(me.jid).toBe('554891600684:80@s.whatsapp.net');
+    expect(me.lid).toBe('13392429502664@lid');
+    expect(me.pushName).toBe('Cleber');
+  });
+
+  it('returns null before the session is paired', () => {
+    expect(sessionWithCredentials(null).buildMeInfo()).toBeNull();
+  });
+});
