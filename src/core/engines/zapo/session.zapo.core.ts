@@ -41,6 +41,7 @@ import {
   WAMessageAck,
 } from '@waha/structures/enums.dto';
 import { WAMessage } from '@waha/structures/responses.dto';
+import { WANumberExistResult } from '@waha/structures/chatting.dto';
 import { BinaryFile, RemoteFile } from '@waha/structures/files.dto';
 import { WAMimeType } from '@waha/core/media/WAMimeType';
 import { PairingCodeResponse } from '@waha/structures/auth.dto';
@@ -71,6 +72,7 @@ import {
 } from 'zapo-js';
 
 import { ZapoStoreFactoryCore } from './ZapoStoreFactoryCore';
+import { buildContactUsyncIq, parseContactUsyncResult } from './usync';
 import { ZapoConfig } from './types';
 
 // zapo only speaks composing/paused - "recording" is a composing chatstate
@@ -1075,11 +1077,24 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
    * forwardMessage and readChatMessages need the message archive wired up
    * (zapo keeps it in the 'messages' store domain); getContacts has no
    * backing API at all - zapo's contact store offers lookup by jid or phone
-   * number but no listing, and there is no usync contact query either, which
-   * is also what checkNumberStatus would need.
+   * number but no listing.
    */
-  checkNumberStatus(request: CheckNumberStatusQuery) {
-    throw new NotImplementedByEngineError();
+  @Activity()
+  public async checkNumberStatus(
+    request: CheckNumberStatusQuery,
+  ): Promise<WANumberExistResult> {
+    const jid = toJID(this.ensureSuffix(request.phone));
+    const sid = `${Date.now()}.${Math.floor(Math.random() * 1e6)}-0`;
+    const node = buildContactUsyncIq(sid, [jid]);
+    const result = await this.client.lowlevel.query(node);
+    const [contact] = parseContactUsyncResult(result);
+    if (!contact?.exists) {
+      return { numberExists: false };
+    }
+    return {
+      numberExists: true,
+      chatId: toCusFormat(contact.jid ?? jid),
+    };
   }
 
   forwardMessage(request: MessageForwardRequest): Promise<WAMessage> {
