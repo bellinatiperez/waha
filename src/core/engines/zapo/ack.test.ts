@@ -156,3 +156,51 @@ describe('ZAPO me info', () => {
     expect(sessionWithCredentials(null).buildMeInfo()).toBeNull();
   });
 });
+
+describe('ZAPO qr status', () => {
+  function sessionOnQr(initial: string, paired: boolean) {
+    const emitted: string[] = [];
+    let current = initial;
+    let handler: (event: { qr: string }) => void;
+    const session: any = {
+      paired: paired,
+      qr: { save: () => undefined },
+      printQR: () => undefined,
+      logger: { debug: () => undefined },
+      client: {
+        on: (event: string, fn: any) => {
+          if (event === 'auth_qr') {
+            handler = fn;
+          }
+        },
+      },
+      setStatus: () => undefined,
+    };
+    Object.defineProperty(session, 'status', {
+      get: () => current,
+      set: (value: string) => {
+        current = value;
+        emitted.push(value);
+      },
+    });
+
+    WhatsappSessionZapoCore.prototype['listenAuthEvents'].call(session);
+    handler({ qr: 'raw-qr' });
+    return emitted;
+  }
+
+  it('does not re-issue the status on every QR rotation', () => {
+    // The QR refreshes every few seconds - each one would be a webhook.
+    expect(sessionOnQr('SCAN_QR_CODE', false)).toEqual([]);
+  });
+
+  it('issues SCAN_QR_CODE the first time', () => {
+    expect(sessionOnQr('STARTING', false)).toEqual(['SCAN_QR_CODE']);
+  });
+
+  it('ignores a QR refresh once the session is paired', () => {
+    // zapo keeps rotating the QR while it reconnects after pairing; bouncing
+    // back to SCAN_QR_CODE would cancel the pending WORKING event.
+    expect(sessionOnQr('WORKING', true)).toEqual([]);
+  });
+});
