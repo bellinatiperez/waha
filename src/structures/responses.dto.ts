@@ -63,6 +63,18 @@ export class WAMessageBase {
     description: 'For groups - participant who sent the message',
   })
   participant: string;
+
+  @ApiProperty({
+    description:
+      "The sender's phone number (chat id) when the message is addressed by " +
+      'LID. `from`/`participant` keep the addressed form (which may be `@lid`); ' +
+      'this carries the resolved phone-number form when available. Currently ' +
+      'populated by the ZAPO engine.',
+    example: '5511999999999@c.us',
+    required: false,
+    nullable: true,
+  })
+  senderPn?: string;
 }
 
 export class WAMessage extends WAMessageBase {
