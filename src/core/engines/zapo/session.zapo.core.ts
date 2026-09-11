@@ -7,7 +7,13 @@ import { WhatsappSession } from '@waha/core/abc/session.abc';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
 import { QR } from '@waha/core/QR';
 import { parseMessageIdSerialized } from '@waha/core/utils/ids';
-import { normalizeJid, toCusFormat, toJID } from '@waha/core/utils/jids';
+import {
+  isLidUser,
+  isPnUser,
+  normalizeJid,
+  toCusFormat,
+  toJID,
+} from '@waha/core/utils/jids';
 import {
   CheckNumberStatusQuery,
   ChatRequest,
@@ -31,6 +37,7 @@ import {
 } from '@waha/structures/groups.dto';
 import { GroupParticipantType } from '@waha/structures/groups.events.dto';
 import { ContactQuery, ContactRequest } from '@waha/structures/contacts.dto';
+import { LidToPhoneNumber } from '@waha/structures/lids.dto';
 import { PaginationParams } from '@waha/structures/pagination.dto';
 import {
   ACK_UNKNOWN,
@@ -589,10 +596,28 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       from: event.key?.remoteJid,
       fromMe: event.key?.fromMe,
       participant: event.key?.participant,
+      senderPn: this.pnFromKey(event.key),
       body: text,
       hasMedia: false,
       _data: event.message,
     };
+  }
+
+  /**
+   * Sender's phone number (chat id) for a message key, or null when unknown.
+   * WhatsApp addresses the sender by LID (`<digits>@lid`) for a growing share
+   * of traffic; the phone-number form travels alongside in the key's alt field
+   * (`remoteJidAlt` for 1:1, `participantAlt` for groups). This picks whichever
+   * of the primary / alt jid is the phone-number form so consumers get the
+   * real number without a per-message round-trip, while `from` stays in the
+   * addressed form for compatibility.
+   */
+  protected pnFromKey(key: any): string | null {
+    const isGroup = Boolean(key?.isGroup ?? key?.participant);
+    const primary = isGroup ? key?.participant : key?.remoteJid;
+    const alt = isGroup ? key?.participantAlt : key?.remoteJidAlt;
+    const pnJid = [primary, alt].find((jid) => isPnUser(jid));
+    return pnJid ? toCusFormat(pnJid) : null;
   }
 
   /**
@@ -1161,6 +1186,39 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     const jid = toJID(this.ensureSuffix(query.contactId));
     const status = await this.client.profile.getStatus(jid);
     return { about: status?.status ?? null };
+  }
+
+  /**
+   * Lid to Phone Number
+   *
+   * zapo has no signal LID-mapping accessor, but it persists the pairing on
+   * the contact store (LID-canonical row: jid=<lid>, phoneNumber=<pn jid>),
+   * so the mapping is read from there without a network round-trip.
+   */
+  public async findPNByLid(lid: string): Promise<LidToPhoneNumber> {
+    const contact = await this.sessionStores().contacts.getByJid(lid);
+    const pn = contact?.phoneNumber;
+    if (!pn) {
+      throw new NotFoundException(
+        `LID '${lid}' is not known by this session`,
+      );
+    }
+    return {
+      lid: lid,
+      pn: toCusFormat(pn),
+    };
+  }
+
+  public async findLIDByPhoneNumber(
+    phoneNumber: string,
+  ): Promise<LidToPhoneNumber> {
+    const pnJid = toJID(this.ensureSuffix(phoneNumber));
+    const contact = await this.sessionStores().contacts.getByPhoneNumber(pnJid);
+    const lid = contact?.lid ?? (isLidUser(contact?.jid) ? contact?.jid : null);
+    return {
+      lid: lid ?? null,
+      pn: toCusFormat(pnJid),
+    };
   }
 
   @Activity()
